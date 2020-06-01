@@ -14,31 +14,27 @@ import numpy as np
 from tensorflow._api.v1.keras import backend as K
 from tensorflow._api.v1.keras.models import Model, load_model
 from tensorflow._api.v1.keras.layers import Input, Lambda
-from tensorflow_model_optimization.sparsity import keras as sparsity
 from PIL import Image
 
-from yolo3.model import get_yolo3_model, get_yolo3_inference_model#, get_yolo3_prenms_model
-from yolo3.postprocess_np import yolo3_postprocess_np
+from yolo3.model import get_yolo3_inference_model
 from common.data_utils import preprocess_image
 from common.utils import get_classes, get_anchors, get_colors, draw_boxes
-from tensorflow._api.v1.keras.utils import multi_gpu_model
 
 # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
-#tf.enable_eager_execution()
+# tf.enable_eager_execution()
 
 default_config = {
-        "model_type": 'tiny_yolo3_darknet',
-        "weights_path": os.path.join('weights', 'yolov3-tiny.h5'),
-        "pruning_model": False,
-        "anchors_path": os.path.join('configs', 'tiny_yolo3_anchors.txt'),
-        "classes_path": os.path.join('configs', 'coco_classes.txt'),
-        "score" : 0.1,
-        "iou" : 0.4,
-        "model_image_size" : (416, 416),
-        "gpu_num" : 1,
-    }
+    "model_type": 'yolo3_darknet_spp',
+    "weights_path": os.path.join('logs', '20200531_test', 'trained_weights_final.h5'),
+    "anchors_path": os.path.join('sample', 'trainval', 'yolo_anchors.txt'),
+    "classes_path": os.path.join('sample', 'trainval', 'train_classes.txt'),
+    "score": 0.1,
+    "iou": 0.4,
+    "model_image_size": (416, 416),
+    "gpu_num": 1,
+}
 
 
 class YOLO(object):
@@ -53,8 +49,13 @@ class YOLO(object):
 
     def __init__(self, **kwargs):
         super(YOLO, self).__init__()
-        self.__dict__.update(self._defaults) # set up default values
-        self.__dict__.update(kwargs) # and update with user overrides
+        self.model_type = None
+        self.model_image_size = None
+        self.anchors_path = None
+        self.classes_path = None
+        self.weights_path = None
+        self.__dict__.update(self._defaults)  # set up default values
+        self.__dict__.update(kwargs)  # and update with user overrides
         self.class_names = get_classes(self.classes_path)
         self.anchors = get_anchors(self.anchors_path)
         self.colors = get_colors(self.class_names)
@@ -69,12 +70,14 @@ class YOLO(object):
         # Load model, or construct model and load weights.
         num_anchors = len(self.anchors)
         num_classes = len(self.class_names)
-        #YOLOv3 model has 9 anchors and 3 feature layers but
-        #Tiny YOLOv3 model has 6 anchors and 2 feature layers,
-        #so we can calculate feature layers number to get model type
-        num_feature_layers = num_anchors//3
+        # YOLOv3 model has 9 anchors and 3 feature layers but
+        # Tiny YOLOv3 model has 6 anchors and 2 feature layers,
+        # so we can calculate feature layers number to get model type
+        num_feature_layers = num_anchors // 3
 
-        inference_model = get_yolo3_inference_model(self.model_type, self.anchors, num_classes, weights_path=weights_path, input_shape=self.model_image_size + (3,), confidence=0.1)
+        inference_model = get_yolo3_inference_model(self.model_type, self.anchors, num_classes,
+                                                    weights_path=weights_path, input_shape=self.model_image_size + (3,),
+                                                    confidence=0.1)
 
         inference_model.summary()
         return inference_model
@@ -92,8 +95,8 @@ class YOLO(object):
 
     def detect_image(self, image):
         if self.model_image_size != (None, None):
-            assert self.model_image_size[0]%32 == 0, 'Multiples of 32 required'
-            assert self.model_image_size[1]%32 == 0, 'Multiples of 32 required'
+            assert self.model_image_size[0] % 32 == 0, 'Multiples of 32 required'
+            assert self.model_image_size[1] % 32 == 0, 'Multiples of 32 required'
 
         image_data = preprocess_image(image, self.model_image_size)
         image_shape = np.array([image.size[0], image.size[1]])
@@ -105,7 +108,7 @@ class YOLO(object):
         print('Found {} boxes for {}'.format(len(out_boxes), 'img'))
         print("Inference time: {:.8f}s".format(end - start))
 
-        #draw result on input image
+        # draw result on input image
         image_array = np.array(image, dtype='uint8')
         image_array = draw_boxes(image_array, out_boxes, out_classes, out_scores, self.class_names, self.colors)
         return Image.fromarray(image_array)
@@ -121,7 +124,6 @@ class YOLO(object):
         print('export inference model to %s' % str(saved_model_path))
 
 
-
 def detect_video(yolo, video_path, output_path=""):
     import cv2
     vid = cv2.VideoCapture(0 if video_path == '0' else video_path)
@@ -132,11 +134,11 @@ def detect_video(yolo, video_path, output_path=""):
     # to convert it to x264 to reduce file size:
     # ffmpeg -i test.mp4 -vcodec libx264 -f mp4 test_264.mp4
     #
-    #video_FourCC    = cv2.VideoWriter_fourcc(*'XVID') if video_path == '0' else int(vid.get(cv2.CAP_PROP_FOURCC))
-    video_FourCC    = cv2.VideoWriter_fourcc(*'XVID') if video_path == '0' else cv2.VideoWriter_fourcc(*"mp4v")
-    video_fps       = vid.get(cv2.CAP_PROP_FPS)
-    video_size      = (int(vid.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                        int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+    # video_FourCC    = cv2.VideoWriter_fourcc(*'XVID') if video_path == '0' else int(vid.get(cv2.CAP_PROP_FOURCC))
+    video_FourCC = cv2.VideoWriter_fourcc(*'XVID') if video_path == '0' else cv2.VideoWriter_fourcc(*"mp4v")
+    video_fps = vid.get(cv2.CAP_PROP_FPS)
+    video_size = (int(vid.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                  int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT)))
     isOutput = True if output_path != "" else False
     if isOutput:
         print("!!! TYPE:", type(output_path), type(video_FourCC), type(video_fps), type(video_size))
@@ -195,17 +197,14 @@ if __name__ == '__main__':
     '''
     parser.add_argument(
         '--model_type', type=str,
-        help='YOLO model type: yolo3_mobilenet_lite/tiny_yolo3_mobilenet/yolo3_darknet/..., default ' + YOLO.get_defaults("model_type")
+        help='YOLO model type: yolo3_mobilenet_lite/tiny_yolo3_mobilenet/yolo3_darknet/..., default ' + YOLO.get_defaults(
+            "model_type")
     )
 
     parser.add_argument(
         '--weights_path', type=str,
         help='path to model weight file, default ' + YOLO.get_defaults("weights_path")
     )
-
-    parser.add_argument(
-        '--pruning_model', default=False, action="store_true",
-        help='Whether to be a pruning model/weights file')
 
     parser.add_argument(
         '--anchors_path', type=str,
@@ -220,8 +219,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--model_image_size', type=str,
         help='model image input size as <num>x<num>, default ' +
-        str(YOLO.get_defaults("model_image_size")[0])+'x'+str(YOLO.get_defaults("model_image_size")[1]),
-        default=str(YOLO.get_defaults("model_image_size")[0])+'x'+str(YOLO.get_defaults("model_image_size")[1])
+             str(YOLO.get_defaults("model_image_size")[0]) + 'x' + str(YOLO.get_defaults("model_image_size")[1]),
+        default=str(YOLO.get_defaults("model_image_size")[0]) + 'x' + str(YOLO.get_defaults("model_image_size")[1])
     )
 
     parser.add_argument(
@@ -236,13 +235,13 @@ if __name__ == '__main__':
     Command line positional arguments -- for video detection mode
     '''
     parser.add_argument(
-        "--input", nargs='?', type=str,required=False,default='./path2your_video',
-        help = "Video input path"
+        "--input", nargs='?', type=str, required=False, default='./path2your_video',
+        help="Video input path"
     )
 
     parser.add_argument(
         "--output", nargs='?', type=str, default="",
-        help = "[Optional] Video output path"
+        help="[Optional] Video output path"
     )
     '''
     Command line positional arguments -- for model dump
