@@ -80,11 +80,11 @@ def get_yolo3_train_model(model_type, anchors, num_classes, input_shape, weights
                                                                                'num_classes': num_classes,
                                                                                'ignore_thresh': 0.5,
                                                                                'label_smoothing': label_smoothing,
-                                                                               'use_focal_obj_loss': use_focal_obj_loss, 
-                                                                               'use_focal_loss': use_focal_loss, 
+                                                                               'use_focal_obj_loss': use_focal_obj_loss,
+                                                                               'use_focal_loss': use_focal_loss,
                                                                                'use_diou_loss': use_diou_loss,
                                                                                'use_softmax_loss': use_softmax_loss})(
-                                                                                [*model_body.output, *y_true])
+        [*model_body.output, *y_true])
 
     model = Model([model_body.input, *y_true], model_loss)
 
@@ -95,7 +95,7 @@ def get_yolo3_train_model(model_type, anchors, num_classes, input_shape, weights
 
 
 def get_yolo3_inference_model(model_type, anchors, num_classes, weights_path=None, input_shape=None, confidence=0.1):
-    '''create the inference model, for YOLOv3'''
+    """create the inference model, for YOLOv3"""
     # K.clear_session() # get a new session
     num_anchors = len(anchors)
     # YOLOv3 model has 9 anchors and 3 feature layers but

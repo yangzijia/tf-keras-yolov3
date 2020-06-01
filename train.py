@@ -11,7 +11,7 @@ from common.model_utils import get_optimizer
 
 
 def main():
-    model_type = "yolo3_darknet"        # yolo3_darknet_spp, yolo3_darknet
+    model_type = "yolo3_darknet_spp"        # yolo3_darknet_spp, yolo3_darknet
     # annotation_file = "sample/trainval/train.txt"
     # val_annotation_file = "sample/trainval/val.txt"
     annotation_file = "sample/shape_voc/trainval.txt"
@@ -19,14 +19,14 @@ def main():
 
     classes_path = "sample/shape_voc/train_classes.txt"
     anchors_path = "sample/shape_voc/yolo_anchors.txt"
-    # weights_path = "weights/yolov3-spp.h5"
-    weights_path = "weights/yolov3_2.h5"
+    weights_path = "weights/yolov3-spp.h5"
+    # weights_path = "weights/yolov3.h5"
     load_weights_path = None  # None or "{weights path}"
     is_one_stage_train = True
     learning_rate_1 = 1e-3
     learning_rate_2 = 1e-4
-    epoch_1 = 50
-    epoch_2 = 100
+    epoch_1 = 1
+    epoch_2 = 2
     batch_size_1 = 16
     batch_size_2 = 4
     freeze_level = 2
