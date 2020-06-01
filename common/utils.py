@@ -4,6 +4,7 @@ import codecs
 import colorsys
 import cv2
 import numpy as np
+from PIL import Image, ImageFont, ImageDraw
 
 
 def get_classes(classes_path):
@@ -54,24 +55,42 @@ def get_colors(class_names):
     return colors
 
 
-def draw_label(image, text, color, coords):
-    font = cv2.FONT_HERSHEY_PLAIN
-    font_scale = 1.
-    (text_width, text_height) = cv2.getTextSize(text, font, fontScale=font_scale, thickness=1)[0]
+def draw_label(matrix, text, color, coords):
+    image = Image.fromarray(matrix)
+    font = ImageFont.truetype(font='data/font/NotoSansHans-Black.otf',
+                              size=np.floor(3e-2 * image.size[1] + 0.5).astype('int32'))
+    draw = ImageDraw.Draw(image)
+    label_size = draw.textsize(text, font)
 
-    padding = 5
-    rect_height = text_height + padding * 2
-    rect_width = text_width + padding * 2
+    # font = cv2.FONT_HERSHEY_PLAIN
+    # font_scale = 1.
+    # (text_width, text_height) = cv2.getTextSize(text, font, fontScale=font_scale, thickness=1)[0]
+
+    # padding = 5
+    # rect_height = text_height + padding * 2
+    # rect_width = text_width + padding * 2
 
     (x, y) = coords
 
-    cv2.rectangle(image, (x, y), (x + rect_width, y - rect_height), color, cv2.FILLED)
-    cv2.putText(image, text, (x + padding, y - text_height + padding), font,
-                fontScale=font_scale,
-                color=(255, 255, 255),
-                lineType=cv2.LINE_AA)
+    if y - label_size[1] >= 0:
+        text_origin = np.array([x, y - label_size[1]])
+    else:
+        text_origin = np.array([x, y + 1])
 
-    return image
+    draw.rectangle(
+        [tuple(text_origin), tuple(text_origin + label_size)],
+        fill=color)
+    draw.text(text_origin, text, fill=(0, 0, 0), font=font)
+    img = np.asarray(image)
+    del draw
+
+    # cv2.rectangle(image, (x, y), (x + rect_width, y - rect_height), color, cv2.FILLED)
+    # cv2.putText(image, text, (x + padding, y - text_height + padding), font,
+    #             fontScale=font_scale,
+    #             color=(255, 255, 255),
+    #             lineType=cv2.LINE_AA)
+
+    return img
 
 
 def draw_boxes(image, boxes, classes, scores, class_names, colors, show_score=True):
@@ -86,7 +105,7 @@ def draw_boxes(image, boxes, classes, scores, class_names, colors, show_score=Tr
             label = '{} {:.2f}'.format(class_name, score)
         else:
             label = '{}'.format(class_name)
-        # print(label, (xmin, ymin), (xmax, ymax))
+        print(label, (xmin, ymin), (xmax, ymax))
 
         # if no color info, use black(0,0,0)
         if colors == None:

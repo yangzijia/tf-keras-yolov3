@@ -27,7 +27,7 @@ from common.utils import get_classes, get_anchors, get_colors, draw_boxes
 
 default_config = {
     "model_type": 'yolo3_darknet_spp',
-    "weights_path": os.path.join('logs', '20200531_test', 'trained_weights_final.h5'),
+    "weights_path": os.path.join('weights', 'garbage_44_2epochs.h5'),
     "anchors_path": os.path.join('sample', 'trainval', 'yolo_anchors.txt'),
     "classes_path": os.path.join('sample', 'trainval', 'train_classes.txt'),
     "score": 0.1,
