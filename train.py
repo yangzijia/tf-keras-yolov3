@@ -11,24 +11,25 @@ from common.model_utils import get_optimizer
 
 
 def main():
-    model_type = "yolo3_darknet"        # yolo3_darknet_spp, yolo3_darknet
-    # annotation_file = "sample/trainval/train.txt"
-    # val_annotation_file = "sample/trainval/val.txt"
-    annotation_file = "sample/shape_voc/trainval.txt"
-    val_annotation_file = ""
+    model_type = "yolo3_darknet_spp"        # yolo3_darknet_spp, yolo3_darknet
+    annotation_file = "sample/trainval/train.txt"
+    val_annotation_file = "sample/trainval/val.txt"
+    
+    # annotation_file = "sample/shape_voc/trainval.txt"
+    # val_annotation_file = ""
 
-    classes_path = "sample/shape_voc/train_classes.txt"
-    anchors_path = "sample/shape_voc/yolo_anchors.txt"
-    # weights_path = "weights/yolov3-spp.h5"
-    weights_path = "weights/yolov3_2.h5"
+    classes_path = "sample/trainval/train_classes.txt"
+    anchors_path = "sample/trainval/yolo_anchors.txt"
+    weights_path = "weights/yolov3-spp.h5"
+    # weights_path = "weights/yolov3_2.h5"
     load_weights_path = None  # None or "{weights path}"
     is_one_stage_train = True
     learning_rate_1 = 1e-3
     learning_rate_2 = 1e-4
-    epoch_1 = 50
-    epoch_2 = 100
-    batch_size_1 = 16
-    batch_size_2 = 4
+    epoch_1 = 1
+    epoch_2 = 2
+    batch_size_1 = 32
+    batch_size_2 = 8
     freeze_level = 2
     model_image_size = (416, 416)
     val_split = 0.1
