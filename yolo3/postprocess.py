@@ -39,18 +39,18 @@ def yolo3_correct_boxes(box_xy, box_wh, input_shape, image_shape):
     input_shape = K.cast(input_shape, K.dtype(box_xy))
     image_shape = K.cast(image_shape, K.dtype(box_xy))
 
-    #reshape the image_shape tensor to align with boxes dimension
+    # reshape the image_shape tensor to align with boxes dimension
     image_shape = K.reshape(image_shape, [-1, 1, 1, 1, 2])
 
-    new_shape = K.round(image_shape * K.min(input_shape/image_shape))
-    offset = (input_shape-new_shape)/2./input_shape
-    scale = input_shape/new_shape
+    new_shape = K.round(image_shape * K.min(input_shape / image_shape))
+    offset = (input_shape - new_shape) / 2. / input_shape
+    scale = input_shape / new_shape
     box_xy = (box_xy - offset) * scale
     box_wh *= scale
 
     box_mins = box_xy - (box_wh / 2.)
     box_maxes = box_xy + (box_wh / 2.)
-    boxes =  K.concatenate([
+    boxes = K.concatenate([
         box_mins[..., 0:1],  # x_min
         box_mins[..., 1:2],  # y_min
         box_maxes[..., 0:1],  # x_max
@@ -65,7 +65,7 @@ def yolo3_correct_boxes(box_xy, box_wh, input_shape, image_shape):
 def yolo3_boxes_and_scores(feats, anchors, num_classes, input_shape, image_shape):
     '''Process Conv layer output'''
     box_xy, box_wh, box_confidence, box_class_probs = yolo3_head(feats,
-        anchors, num_classes, input_shape)
+                                                                 anchors, num_classes, input_shape)
     boxes = yolo3_correct_boxes(box_xy, box_wh, input_shape, image_shape)
     boxes = K.reshape(boxes, [-1, 4])
     box_scores = box_confidence * box_class_probs
@@ -73,14 +73,13 @@ def yolo3_boxes_and_scores(feats, anchors, num_classes, input_shape, image_shape
     return boxes, box_scores
 
 
-
 def batched_yolo3_boxes_and_scores(feats, anchors, num_classes, input_shape, image_shape):
     '''Process Conv layer output'''
     box_xy, box_wh, box_confidence, box_class_probs = yolo3_head(feats,
-        anchors, num_classes, input_shape)
+                                                                 anchors, num_classes, input_shape)
 
     num_anchors = len(anchors)
-    grid_shape = K.shape(feats)[1:3] # height, width
+    grid_shape = K.shape(feats)[1:3]  # height, width
     total_anchor_num = grid_shape[0] * grid_shape[1] * num_anchors
 
     boxes = yolo3_correct_boxes(box_xy, box_wh, input_shape, image_shape)
@@ -91,33 +90,34 @@ def batched_yolo3_boxes_and_scores(feats, anchors, num_classes, input_shape, ima
 
 
 def batched_yolo3_postprocess(args,
-              anchors,
-              num_classes,
-              max_boxes=100,
-              confidence=0.1,
-              iou_threshold=0.4):
+                              anchors,
+                              num_classes,
+                              max_boxes=100,
+                              score_threshold=0.1,
+                              iou_threshold=0.4):
     """Postprocess for YOLOv3 model on given input and return filtered boxes."""
 
-    num_layers = len(anchors)//3 # default setting
+    num_layers = len(anchors) // 3  # default setting
     yolo_outputs = args[:num_layers]
     image_shape = args[num_layers]
 
-    anchor_mask = [[6,7,8], [3,4,5], [0,1,2]] if num_layers==3 else [[3,4,5], [0,1,2]] # default setting
+    anchor_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]] if num_layers == 3 else [[3, 4, 5], [0, 1, 2]]  # default setting
     input_shape = K.shape(yolo_outputs[0])[1:3] * 32
 
-    batch_size = K.shape(image_shape)[0] # batch size, tensor
+    batch_size = K.shape(image_shape)[0]  # batch size, tensor
     # print("yolo_outputs",yolo_outputs)
     boxes = []
     box_scores = []
     for l in range(num_layers):
         _boxes, _box_scores = batched_yolo3_boxes_and_scores(yolo_outputs[l],
-            anchors[anchor_mask[l]], num_classes, input_shape, image_shape)
+                                                             anchors[anchor_mask[l]], num_classes, input_shape,
+                                                             image_shape)
         boxes.append(_boxes)
         box_scores.append(_box_scores)
     boxes = K.concatenate(boxes, axis=1)
     box_scores = K.concatenate(box_scores, axis=1)
 
-    mask = box_scores >= confidence
+    mask = box_scores >= score_threshold
     max_boxes_tensor = K.constant(max_boxes, dtype='int32')
 
     def single_image_nms(b, batch_boxes, batch_scores, batch_classes):
@@ -145,16 +145,16 @@ def batched_yolo3_postprocess(args,
         batch_scores = batch_scores.write(b, scores_)
         batch_classes = batch_classes.write(b, classes_)
 
-        return b+1, batch_boxes, batch_scores, batch_classes
+        return b + 1, batch_boxes, batch_scores, batch_classes
 
     batch_boxes = tf.TensorArray(K.dtype(boxes), size=1, dynamic_size=True)
     batch_scores = tf.TensorArray(K.dtype(box_scores), size=1, dynamic_size=True)
     batch_classes = tf.TensorArray(dtype=tf.int32, size=1, dynamic_size=True)
-    _, batch_boxes, batch_scores, batch_classes = tf.while_loop(lambda b,*args: b<batch_size, single_image_nms, [0, batch_boxes, batch_scores, batch_classes])
+    _, batch_boxes, batch_scores, batch_classes = tf.while_loop(lambda b, *args: b < batch_size, single_image_nms,
+                                                                [0, batch_boxes, batch_scores, batch_classes])
 
     batch_boxes = batch_boxes.stack()
     batch_scores = batch_scores.stack()
     batch_classes = batch_classes.stack()
 
     return batch_boxes, batch_scores, batch_classes
-

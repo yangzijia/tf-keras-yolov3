@@ -13,14 +13,14 @@ from collections import defaultdict
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras import backend as K
-from tensorflow.keras.layers import (Conv2D, Input, ZeroPadding2D, Add, Lambda,
-                                     UpSampling2D, MaxPooling2D, AveragePooling2D, Concatenate, Activation)
-from tensorflow.keras.layers import LeakyReLU
-from tensorflow.keras.layers import BatchNormalization
-from tensorflow.keras.models import Model
-from tensorflow.keras.regularizers import l2
-from tensorflow.keras.utils import plot_model as plot
+from tensorflow._api.v1.keras import backend as K
+from tensorflow._api.v1.keras.layers import (Conv2D, Input, ZeroPadding2D, Add, Lambda,
+                                             UpSampling2D, MaxPooling2D, AveragePooling2D, Concatenate, Activation)
+from tensorflow._api.v1.keras.layers import LeakyReLU
+from tensorflow._api.v1.keras.layers import BatchNormalization
+from tensorflow._api.v1.keras.models import Model
+from tensorflow._api.v1.keras.regularizers import l2
+from tensorflow._api.v1.keras.utils import plot_model as plot
 
 sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), '..'))
 
@@ -124,8 +124,7 @@ def _main(args):
             darknet_w_shape = (filters, weights_shape[2], size, size)
             weights_size = np.product(weights_shape)
 
-            print('conv2d', 'bn'
-            if batch_normalize else '  ', activation, weights_shape)
+            print('conv2d', 'bn' if batch_normalize else '  ', activation, weights_shape)
 
             conv_bias = np.ndarray(
                 shape=(filters,),

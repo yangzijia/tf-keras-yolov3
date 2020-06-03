@@ -1,44 +1,57 @@
-#! /usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Run a YOLOv3/YOLOv2 style detection model on test images.
+Class definition of YOLO_v3 style detection model on image and video
 """
 
 import colorsys
-import os, sys, argparse
-import cv2
-import time
 from timeit import default_timer as timer
-import tensorflow as tf
+from collections import OrderedDict
+import os, sys, argparse
 import numpy as np
-from tensorflow._api.v1.keras import backend as K
-from tensorflow._api.v1.keras.models import Model, load_model
-from tensorflow._api.v1.keras.layers import Input, Lambda
-from PIL import Image
 
-from yolo3.model import get_yolo3_inference_model
-from common.data_utils import preprocess_image
-from common.utils import get_classes, get_anchors, get_colors, draw_boxes
+from tensorflow._api.v1.keras.models import load_model
+from tensorflow._api.v1.keras.layers import Input
+from PIL import Image, ImageFont, ImageDraw
 
-# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-# os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+import tensorflow.keras.backend as K
 
-# tf.enable_eager_execution()
+from yolo3.model import yolo_eval
+from yolo3.data import letterbox_image
 
-default_config = {
-    "model_type": 'yolo3_darknet_spp',
-    "weights_path": os.path.join('weights', 'garbage_44_2epochs.h5'),
-    "anchors_path": os.path.join('sample', 'trainval', 'yolo_anchors.txt'),
-    "classes_path": os.path.join('sample', 'trainval', 'train_classes.txt'),
-    "score": 0.1,
-    "iou": 0.4,
-    "model_image_size": (416, 416),
-    "gpu_num": 1,
-}
+from yolo3.models.yolo3_darknet import custom_yolo3_spp_body
+
+# from yolo3.data_utils import preprocess_image
+
+import os
+from keras.utils import multi_gpu_model
+import time
+
+from PIL import Image, ImageFile
+
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class YOLO(object):
-    _defaults = default_config
+    # _defaults = {
+    #     "model_path": 'D://ep041-loss9.505-val_loss8.938.h5',
+    #     "anchors_path": 'model_data/train_anchors.txt',
+    #     "classes_path": 'model_data/train_classes.txt',
+    #     "score": 0.01,
+    #     "iou": 0.45,
+    #     "model_image_size": (416, 416),
+    #     "gpu_num": 1,
+    # }
+
+    _defaults = {
+        "model_type": 'yolo3_darknet_spp',  # yolo3_darknet_spp
+        "model_path": "2020sz/model/diou_trained_weights_final_40.h5",
+        "anchors_path": "sample/trainval/yolo_anchors.txt",
+        "classes_path": "sample/trainval/train_classes.txt",
+        "score": 0.01,
+        "iou": 0.45,
+        "model_image_size": (416, 416),
+        "gpu_num": 1,
+    }
 
     @classmethod
     def get_defaults(cls, n):
@@ -48,101 +61,177 @@ class YOLO(object):
             return "Unrecognized attribute name '" + n + "'"
 
     def __init__(self, **kwargs):
-        super(YOLO, self).__init__()
-        self.model_type = None
-        self.model_image_size = None
-        self.anchors_path = None
-        self.classes_path = None
-        self.weights_path = None
         self.__dict__.update(self._defaults)  # set up default values
         self.__dict__.update(kwargs)  # and update with user overrides
-        self.class_names = get_classes(self.classes_path)
-        self.anchors = get_anchors(self.anchors_path)
-        self.colors = get_colors(self.class_names)
-        K.set_learning_phase(0)
-        self.inference_model = self._generate_model()
+        self.class_names = self._get_class()
+        self.anchors = self._get_anchors()
+        self.sess = K.get_session()
+        self.boxes, self.scores, self.classes = self.generate()
 
-    def _generate_model(self):
-        '''to generate the bounding boxes'''
-        weights_path = os.path.expanduser(self.weights_path)
-        assert weights_path.endswith('.h5'), 'Keras model or weights must be a .h5 file.'
+    def _get_class(self):
+        classes_path = os.path.expanduser(self.classes_path)
+        with open(classes_path, encoding='utf-8') as f:
+            class_names = f.readlines()
+        class_names = [c.strip() for c in class_names]
+        return class_names
+
+    def _get_anchors(self):
+        anchors_path = os.path.expanduser(self.anchors_path)
+        with open(anchors_path) as f:
+            anchors = f.readline()
+        anchors = [float(x) for x in anchors.split(',')]
+        return np.array(anchors).reshape(-1, 2)
+
+    def generate(self):
+        model_path = os.path.expanduser(self.model_path)
+        assert model_path.endswith('.h5'), 'Keras model or weights must be a .h5 file.'
 
         # Load model, or construct model and load weights.
         num_anchors = len(self.anchors)
         num_classes = len(self.class_names)
-        # YOLOv3 model has 9 anchors and 3 feature layers but
-        # Tiny YOLOv3 model has 6 anchors and 2 feature layers,
-        # so we can calculate feature layers number to get model type
-        num_feature_layers = num_anchors // 3
+        is_tiny_version = num_anchors == 6  # default setting
+        try:
+            self.yolo_model = load_model(model_path, compile=False)
+        except:
+            self.yolo_model = custom_yolo3_spp_body(Input(shape=(None, None, 3)), num_anchors // 3, num_classes)
+            # self.yolo_model = yolo3_efficientnet_body(Input(shape=(None, None, 3)), num_anchors // 3, num_classes,
+            #                                           level=5)
+            self.yolo_model.load_weights(self.model_path)  # make sure model, anchors and classes match
+        else:
+            assert self.yolo_model.layers[-1].output_shape[-1] == \
+                   num_anchors / len(self.yolo_model.output) * (num_classes + 5), \
+                'Mismatch between model and given anchor and class sizes'
 
-        inference_model = get_yolo3_inference_model(self.model_type, self.anchors, num_classes,
-                                                    weights_path=weights_path, input_shape=self.model_image_size + (3,),
-                                                    confidence=0.1)
+        print('{} model, anchors, and classes loaded.'.format(model_path))
 
-        inference_model.summary()
-        return inference_model
+        # Generate colors for drawing bounding boxes.
+        hsv_tuples = [(x / len(self.class_names), 1., 1.)
+                      for x in range(len(self.class_names))]
+        self.colors = list(map(lambda x: colorsys.hsv_to_rgb(*x), hsv_tuples))
+        self.colors = list(
+            map(lambda x: (int(x[0] * 255), int(x[1] * 255), int(x[2] * 255)),
+                self.colors))
+        np.random.seed(10101)  # Fixed seed for consistent colors across runs.
+        np.random.shuffle(self.colors)  # Shuffle colors to decorrelate adjacent classes.
+        np.random.seed(None)  # Reset seed to default.
 
-    def predict(self, image_data, image_shape):
-        out_boxes, out_scores, out_classes = self.inference_model.predict([image_data, image_shape])
-
-        out_boxes = out_boxes[0]
-        out_scores = out_scores[0]
-        out_classes = out_classes[0]
-
-        out_boxes = out_boxes.astype(np.int32)
-        out_classes = out_classes.astype(np.int32)
-        return out_boxes, out_classes, out_scores
+        # Generate output tensor targets for filtered bounding boxes.
+        self.input_image_shape = K.placeholder(shape=(2,))
+        if self.gpu_num >= 2:
+            self.yolo_model = multi_gpu_model(self.yolo_model, gpus=self.gpu_num)
+        boxes, scores, classes = yolo_eval(self.yolo_model.output, self.anchors,
+                                           len(self.class_names), self.input_image_shape,
+                                           score_threshold=self.score, iou_threshold=self.iou)
+        return boxes, scores, classes
 
     def detect_image(self, image):
+        start = timer()
+
         if self.model_image_size != (None, None):
             assert self.model_image_size[0] % 32 == 0, 'Multiples of 32 required'
             assert self.model_image_size[1] % 32 == 0, 'Multiples of 32 required'
+            boxed_image = letterbox_image(image, tuple(reversed(self.model_image_size)))
+        else:
+            new_image_size = (image.width - (image.width % 32),
+                              image.height - (image.height % 32))
+            boxed_image = letterbox_image(image, new_image_size)
+        image_data = np.array(boxed_image, dtype='float32')
 
-        image_data = preprocess_image(image, self.model_image_size)
-        image_shape = np.array([image.size[0], image.size[1]])
-        image_shape = np.expand_dims(image_shape, 0)
+        # print(image_data.shape)
+        image_data /= 255.
+        image_data = np.expand_dims(image_data, 0)  # Add batch dimension.
 
-        start = time.time()
-        out_boxes, out_classes, out_scores = self.predict(image_data, image_shape)
-        end = time.time()
+        out_boxes, out_scores, out_classes = self.sess.run(
+            [self.boxes, self.scores, self.classes],
+            feed_dict={
+                self.yolo_model.input: image_data,
+                self.input_image_shape: [image.size[1], image.size[0]],
+                K.learning_phase(): 0
+            })
+
         print('Found {} boxes for {}'.format(len(out_boxes), 'img'))
-        print("Inference time: {:.8f}s".format(end - start))
 
-        # draw result on input image
-        image_array = np.array(image, dtype='uint8')
-        image_array = draw_boxes(image_array, out_boxes, out_classes, out_scores, self.class_names, self.colors)
-        return Image.fromarray(image_array)
+        font = ImageFont.truetype(font='c://windows//fonts//simsun.ttc',
+                                  size=np.floor(3e-2 * image.size[1] + 0.5).astype('int32'), encoding="utf-8")
+        thickness = (image.size[0] + image.size[1]) // 300
 
-    def dump_model_file(self, output_model_file):
-        self.inference_model.save(output_model_file)
+        for i, c in reversed(list(enumerate(out_classes))):
+            predicted_class = self.class_names[c]
+            box = out_boxes[i]
+            score = out_scores[i]
 
-    def dump_saved_model(self, saved_model_path):
-        model = self.inference_model
-        os.makedirs(saved_model_path, exist_ok=True)
+            label = '{} {:.2f}'.format(predicted_class, score)
+            draw = ImageDraw.Draw(image)
+            label_size = draw.textsize(label, font)
 
-        tf.keras.experimental.export_saved_model(model, saved_model_path)
-        print('export inference model to %s' % str(saved_model_path))
+            top, left, bottom, right = box
+            top = max(0, np.floor(top + 0.5).astype('int32'))
+            left = max(0, np.floor(left + 0.5).astype('int32'))
+            bottom = min(image.size[1], np.floor(bottom + 0.5).astype('int32'))
+            right = min(image.size[0], np.floor(right + 0.5).astype('int32'))
+            print("label_id: %s, label_name: %s, score: %.2f, " % (c, predicted_class, score), "box:", (left, top),
+                  (right, bottom))
+
+            if top - label_size[1] >= 0:
+                text_origin = np.array([left, top - label_size[1]])
+            else:
+                text_origin = np.array([left, top + 1])
+
+            # # My kingdom for a good redistributable image drawing library.
+            for i in range(thickness):
+                draw.rectangle(
+                    [left + i, top + i, right - i, bottom - i],
+                    outline=self.colors[c])
+            draw.rectangle(
+                [tuple(text_origin), tuple(text_origin + label_size)],
+                fill=self.colors[c])
+            # draw.text(text_origin, '{}, {:.2f}'.format(str(c), score), fill=(0, 0, 0))
+            draw.text(text_origin, '{}, {:.2f}'.format(str(predicted_class), score), fill=(255, 255, 255), font=font)
+            del draw
+
+        result = OrderedDict()
+        if out_boxes is not None:
+            detection_class_names = []
+            for class_id in out_classes:
+                detection_class_names.append(self.class_names[int(class_id)])
+            out_boxes_list = []
+            for box in out_boxes:
+                top, left, bottom, right = box
+                top = max(0, np.floor(top + 0.5).astype('int32'))
+                left = max(0, np.floor(left + 0.5).astype('int32'))
+                bottom = min(image.size[1], np.floor(bottom + 0.5).astype('int32'))
+                right = min(image.size[0], np.floor(right + 0.5).astype('int32'))
+                res_box = np.array([left, top, right, bottom])
+                # res_box = np.array([top, left, bottom, right])
+                out_boxes_list.append([round(float(v), 1) for v in res_box])
+            result['detection_classes'] = detection_class_names
+            result['detection_scores'] = [round(float(v), 4) for v in out_scores]
+            result['detection_boxes'] = out_boxes_list
+        else:
+            result['detection_classes'] = []
+            result['detection_scores'] = []
+            result['detection_boxes'] = []
+        end = timer()
+        # print(end - start)
+        return image, result
+
+    def close_session(self):
+        self.sess.close()
 
 
 def detect_video(yolo, video_path, output_path=""):
     import cv2
-    vid = cv2.VideoCapture(0 if video_path == '0' else video_path)
+    vid = cv2.VideoCapture(video_path)
     if not vid.isOpened():
         raise IOError("Couldn't open webcam or video")
-
-    # here we encode the video to MPEG-4 for better compatibility, you can use ffmpeg later
-    # to convert it to x264 to reduce file size:
-    # ffmpeg -i test.mp4 -vcodec libx264 -f mp4 test_264.mp4
-    #
-    # video_FourCC    = cv2.VideoWriter_fourcc(*'XVID') if video_path == '0' else int(vid.get(cv2.CAP_PROP_FOURCC))
-    video_FourCC = cv2.VideoWriter_fourcc(*'XVID') if video_path == '0' else cv2.VideoWriter_fourcc(*"mp4v")
+    video_FourCC = int(vid.get(cv2.CAP_PROP_FOURCC))
     video_fps = vid.get(cv2.CAP_PROP_FPS)
     video_size = (int(vid.get(cv2.CAP_PROP_FRAME_WIDTH)),
                   int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT)))
     isOutput = True if output_path != "" else False
     if isOutput:
         print("!!! TYPE:", type(output_path), type(video_FourCC), type(video_fps), type(video_size))
-        out = cv2.VideoWriter(output_path, video_FourCC, (5. if video_path == '0' else video_fps), video_size)
+        out = cv2.VideoWriter(output_path, video_FourCC, video_fps, video_size)
     accum_time = 0
     curr_fps = 0
     fps = "FPS: ??"
@@ -169,11 +258,7 @@ def detect_video(yolo, video_path, output_path=""):
             out.write(result)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-    # Release everything if job is finished
-    vid.release()
-    if isOutput:
-        out.release()
-    cv2.destroyAllWindows()
+    yolo.close_session()
 
 
 def detect_img(yolo):
@@ -190,101 +275,9 @@ def detect_img(yolo):
 
 
 if __name__ == '__main__':
-    # class YOLO defines the default value, so suppress any default here
     parser = argparse.ArgumentParser(argument_default=argparse.SUPPRESS, description='demo or dump out YOLO h5 model')
-    '''
-    Command line options
-    '''
-    parser.add_argument(
-        '--model_type', type=str,
-        help='YOLO model type: yolo3_mobilenet_lite/tiny_yolo3_mobilenet/yolo3_darknet/..., default ' + YOLO.get_defaults(
-            "model_type")
-    )
-
-    parser.add_argument(
-        '--weights_path', type=str,
-        help='path to model weight file, default ' + YOLO.get_defaults("weights_path")
-    )
-
-    parser.add_argument(
-        '--anchors_path', type=str,
-        help='path to anchor definitions, default ' + YOLO.get_defaults("anchors_path")
-    )
-
-    parser.add_argument(
-        '--classes_path', type=str,
-        help='path to class definitions, default ' + YOLO.get_defaults("classes_path")
-    )
-
-    parser.add_argument(
-        '--model_image_size', type=str,
-        help='model image input size as <num>x<num>, default ' +
-             str(YOLO.get_defaults("model_image_size")[0]) + 'x' + str(YOLO.get_defaults("model_image_size")[1]),
-        default=str(YOLO.get_defaults("model_image_size")[0]) + 'x' + str(YOLO.get_defaults("model_image_size")[1])
-    )
-
-    parser.add_argument(
-        '--gpu_num', type=int,
-        help='Number of GPU to use, default ' + str(YOLO.get_defaults("gpu_num"))
-    )
-    parser.add_argument(
-        '--image', default=False, action="store_true",
-        help='Image detection mode, will ignore all positional arguments'
-    )
-    '''
-    Command line positional arguments -- for video detection mode
-    '''
-    parser.add_argument(
-        "--input", nargs='?', type=str, required=False, default='./path2your_video',
-        help="Video input path"
-    )
-
-    parser.add_argument(
-        "--output", nargs='?', type=str, default="",
-        help="[Optional] Video output path"
-    )
-    '''
-    Command line positional arguments -- for model dump
-    '''
-    parser.add_argument(
-        '--dump_model', default=False, action="store_true",
-        help='Dump out training model to inference model'
-    )
-
-    parser.add_argument(
-        '--output_model_file', type=str,
-        help='output inference model file'
-    )
-
     args = parser.parse_args()
-    # param parse
-    if args.model_image_size:
-        height, width = args.model_image_size.split('x')
-        args.model_image_size = (int(height), int(width))
-
-    # get wrapped inference object
+    # yolo = YOLO_np(**vars(args))
     yolo = YOLO(**vars(args))
 
-    if args.dump_model:
-        """
-        Dump out training model to inference model
-        """
-        if not args.output_model_file:
-            raise ValueError('output model file is not specified')
-
-        print('Dumping out training model to inference model')
-        yolo.dump_model_file(args.output_model_file)
-        sys.exit()
-
-    if args.image:
-        """
-        Image detection mode, disregard any remaining command line arguments
-        """
-        print("Image detection mode")
-        if "input" in args:
-            print(" Ignoring remaining command line arguments: " + args.input + "," + args.output)
-        detect_img(yolo)
-    elif "input" in args:
-        detect_video(yolo, args.input, args.output)
-    else:
-        print("Must specify at least video_input_path.  See usage with --help.")
+    detect_img(yolo)
